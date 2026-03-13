@@ -1,4 +1,5 @@
-﻿from datetime import datetime
+﻿import textwrap
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -12,6 +13,8 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Rectangle
 
 from .analysis import (
+    _format_industry_name,
+    _format_sector_name,
     analyze_long_term_fundamentals,
     analyze_sector_comparison,
     analyze_speed,
@@ -55,6 +58,39 @@ EMPTY_SECTOR_COMP = {
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ANALYSIS_OUTPUT_DIR = PROJECT_ROOT / "분석자료"
+
+MARKET_STATE_LABELS = {
+    "REGULAR_CLOSE": "정규장 종가 기준",
+    "PREMARKET": "프리마켓",
+    "AFTERMARKET": "애프터마켓",
+    "EXTENDED": "시간외 거래",
+}
+
+FACTOR_LABELS = {
+    "trend": "추세",
+    "momentum": "모멘텀",
+    "volatility": "변동성",
+    "flow": "수급",
+    "relative": "상대강도",
+    "growth": "성장성",
+    "quality": "현금흐름/이익의 질",
+    "balance": "재무안정성",
+    "profitability": "수익성",
+    "market_position": "시장 위치",
+}
+
+TERM_LABELS = {
+    "short": "단기",
+    "medium": "중기",
+    "long": "장기",
+    "all": "전체",
+}
+
+PERIOD_SUFFIX_LABELS = {
+    "d": "일",
+    "mo": "개월",
+    "y": "년",
+}
 
 
 def _safe_ticker_info(ticker: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -102,6 +138,29 @@ def _normalize_timestamp(value: Any) -> Any:
 
 def _normalize_term(term: Term) -> str:
     return "medium" if term == "all" else term
+
+
+def _format_term_label(term: str) -> str:
+    return TERM_LABELS.get(term, term)
+
+
+def _format_period_label(period: str) -> str:
+    if period == "max":
+        return "전체 기간"
+    for suffix, label in PERIOD_SUFFIX_LABELS.items():
+        if period.endswith(suffix):
+            value = period[: -len(suffix)]
+            if value.isdigit():
+                return f"{int(value)}{label}"
+    return period
+
+
+def _format_base_info_value(key: str, value: Any) -> Any:
+    if key == "섹터":
+        return _format_sector_name(str(value))
+    if key == "산업":
+        return _format_industry_name(str(value))
+    return value
 
 
 def _build_price_summary(df: pd.DataFrame, ext: dict[str, Any]) -> dict[str, Any]:
@@ -152,6 +211,41 @@ def _build_price_summary(df: pd.DataFrame, ext: dict[str, Any]) -> dict[str, Any
     }
 
 
+def _collect_common_section_lines(sections: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if len(sections) < 2:
+        return [], sections
+
+    common_items: list[dict[str, Any]] = []
+    section_item_maps = [{item["name"]: item for item in section["items"]} for section in sections]
+    common_names = [
+        item["name"]
+        for item in sections[0]["items"]
+        if all(item["name"] in section_map for section_map in section_item_maps[1:])
+    ]
+
+    for item_name in common_names:
+        line_lists = [section_map[item_name]["lines"] for section_map in section_item_maps]
+        common_lines = [line for line in line_lists[0] if line and all(line in lines for lines in line_lists[1:])]
+        if common_lines:
+            common_items.append({"name": item_name, "lines": common_lines})
+
+    if not common_items:
+        return [], sections
+
+    filtered_sections: list[dict[str, Any]] = []
+    for section in sections:
+        filtered_items = []
+        for item in section["items"]:
+            common_lines = next((common["lines"] for common in common_items if common["name"] == item["name"]), [])
+            unique_lines = [line for line in item["lines"] if line not in common_lines]
+            if unique_lines:
+                filtered_items.append({**item, "lines": unique_lines})
+        if filtered_items:
+            filtered_sections.append({**section, "items": filtered_items})
+
+    return common_items, filtered_sections
+
+
 def _build_term_sections(df: pd.DataFrame, fin: dict[str, Any], current_price: float, term: Term) -> list[dict[str, Any]]:
     section_names = {
         "trend": "추세 (이동평균선)",
@@ -181,6 +275,11 @@ def _build_term_sections(df: pd.DataFrame, fin: dict[str, Any], current_price: f
                 }
             )
         sections.append({"term": current_term, "label": term_labels[current_term], "items": items})
+
+    if term == "all":
+        common_items, filtered_sections = _collect_common_section_lines(sections)
+        if common_items:
+            return [{"term": "summary", "label": "종합 자료", "items": common_items}, *filtered_sections]
 
     return sections
 
@@ -262,8 +361,9 @@ def build_analysis_report(ticker: str, period: str = "2y", show_chart_data: bool
 
 
 def _print_header(report: dict[str, Any]):
+    company_name = report["base_info"].get("종목명") or report["ticker"]
     print(f"\n{'='*60}")
-    print(f"  {report['ticker']} 투자 분석 (Yahoo Finance)")
+    print(f"  {company_name} ({report['ticker']}) 투자 분석")
     print(f"{'='*60}\n")
 
 
@@ -278,7 +378,7 @@ def _print_base_info(report: dict[str, Any]):
     print("[기본 정보]")
     for key, value in report["base_info"].items():
         if value is not None and value != "-":
-            print(f"  {key}: {value}")
+            print(f"  {key}: {_format_base_info_value(key, value)}")
     print()
 
 
@@ -291,12 +391,13 @@ def _print_sector_info(report: dict[str, Any]):
 
 def _print_price_summary(report: dict[str, Any]):
     summary = report["price_summary"]
+    market_state_label = MARKET_STATE_LABELS.get(summary["market_state"], summary["market_state"])
 
     print("[최근 가격]")
     latest_date = summary["latest_date"]
     print(f"  일봉 기준 일자: {latest_date.date() if hasattr(latest_date, 'date') else latest_date}")
     print(f"  정규장 종가: {summary['daily_close']:.2f}")
-    print(f"  분석 기준 가격: {summary['current_price']:.2f} ({summary['market_state']})")
+    print(f"  분석 기준 가격: {summary['current_price']:.2f} ({market_state_label})")
 
     if summary["ext_time"] is not None:
         print(f"  연장장 체결 시각: {summary['ext_time']}")
@@ -326,16 +427,16 @@ def _print_scores(report: dict[str, Any]):
     scores = report["scores"]
 
     print("[매수/매도 신호 점수]")
-    print(f"  점수 기준 기간: {scores['term']}")
+    print(f"  점수 기준 기간: {_format_term_label(scores['term'])}")
     print(f"  기술적 점수: {scores['technical']}/100")
     print(f"  펀더멘털 점수: {scores['fundamentals']}/100")
     print(f"  종합 점수: {scores['total']}/100 → {scores['label']}")
     print("  기술 팩터:")
     for name, value in scores["technical_factors"].items():
-        print(f"    - {name}: {value}")
+        print(f"    - {FACTOR_LABELS.get(name, name)}: {value}")
     print("  재무 팩터:")
     for name, value in scores["fundamental_factors"].items():
-        print(f"    - {name}: {value}")
+        print(f"    - {FACTOR_LABELS.get(name, name)}: {value}")
     print("  기술적 근거:")
     for reason in scores["technical_reasons"][:6]:
         print(f"    - {reason}")
@@ -359,9 +460,10 @@ def _append_blank(lines: list[str]):
 
 
 def _render_report_lines(report: dict[str, Any]) -> list[str]:
+    company_name = report["base_info"].get("종목명") or report["ticker"]
     lines: list[str] = []
     lines.append("=" * 60)
-    lines.append(f"{report['ticker']} 투자 분석 (Yahoo Finance)")
+    lines.append(f"{company_name} ({report['ticker']}) 투자 분석")
     lines.append("=" * 60)
     _append_blank(lines)
 
@@ -373,7 +475,7 @@ def _render_report_lines(report: dict[str, Any]) -> list[str]:
     lines.append("[기본 정보]")
     for key, value in report["base_info"].items():
         if value is not None and value != "-":
-            lines.append(f"{key}: {value}")
+            lines.append(f"{key}: {_format_base_info_value(key, value)}")
     _append_blank(lines)
 
     lines.append("[섹터/산업 대비 분석]")
@@ -383,10 +485,11 @@ def _render_report_lines(report: dict[str, Any]) -> list[str]:
 
     summary = report["price_summary"]
     latest_date = summary["latest_date"]
+    market_state_label = MARKET_STATE_LABELS.get(summary["market_state"], summary["market_state"])
     lines.append("[최근 가격]")
     lines.append(f"일봉 기준 일자: {latest_date.date() if hasattr(latest_date, 'date') else latest_date}")
     lines.append(f"정규장 종가: {summary['daily_close']:.2f}")
-    lines.append(f"분석 기준 가격: {summary['current_price']:.2f} ({summary['market_state']})")
+    lines.append(f"분석 기준 가격: {summary['current_price']:.2f} ({market_state_label})")
     if summary["ext_time"] is not None:
         lines.append(f"연장장 체결 시각: {summary['ext_time']}")
     if summary["diff_pct"] is not None:
@@ -407,16 +510,16 @@ def _render_report_lines(report: dict[str, Any]) -> list[str]:
 
     scores = report["scores"]
     lines.append("[매수/매도 신호 점수]")
-    lines.append(f"점수 기준 기간: {scores['term']}")
+    lines.append(f"점수 기준 기간: {_format_term_label(scores['term'])}")
     lines.append(f"기술적 점수: {scores['technical']}/100")
     lines.append(f"펀더멘털 점수: {scores['fundamentals']}/100")
     lines.append(f"종합 점수: {scores['total']}/100 -> {scores['label']}")
     lines.append("기술 팩터:")
     for name, value in scores["technical_factors"].items():
-        lines.append(f"- {name}: {value}")
+        lines.append(f"- {FACTOR_LABELS.get(name, name)}: {value}")
     lines.append("재무 팩터:")
     for name, value in scores["fundamental_factors"].items():
-        lines.append(f"- {name}: {value}")
+        lines.append(f"- {FACTOR_LABELS.get(name, name)}: {value}")
     lines.append("기술적 근거:")
     for reason in scores["technical_reasons"][:6]:
         lines.append(f"- {reason}")
@@ -450,6 +553,20 @@ def _get_pdf_font_properties() -> Optional[font_manager.FontProperties]:
     return None
 
 
+def _wrap_pdf_text(text: str, width: int) -> list[str]:
+    raw_lines = str(text).splitlines() or [""]
+    wrapped: list[str] = []
+    for raw_line in raw_lines:
+        chunks = textwrap.wrap(
+            raw_line,
+            width=width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+        wrapped.extend(chunks or [""])
+    return wrapped
+
+
 def _save_report_pdf(report: dict[str, Any]) -> Path:
     ANALYSIS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -477,6 +594,55 @@ def _save_report_pdf(report: dict[str, Any]) -> Path:
         add_text(fig, 0.07, y_top - 0.02, title, size=12, weight="bold")
         return y_top - 0.055
 
+    def draw_text_column(fig, x: float, y_top: float, lines: list[str], *, width: int, size: int = 10, line_height: float = 0.024):
+        y = y_top
+        for line in lines:
+            for wrapped_line in _wrap_pdf_text(line, width):
+                add_text(fig, x, y, wrapped_line, size=size)
+                y -= line_height
+        return y
+
+    def draw_two_column_card(
+        fig,
+        y_top: float,
+        title: str,
+        left_title: str,
+        left_lines: list[str],
+        right_title: str,
+        right_lines: list[str],
+        *,
+        left_width: int = 34,
+        right_width: int = 30,
+        size: int = 9,
+        line_height: float = 0.022,
+    ) -> float:
+        left_wrapped = [wrapped for line in left_lines for wrapped in _wrap_pdf_text(line, left_width)]
+        right_wrapped = [wrapped for line in right_lines for wrapped in _wrap_pdf_text(line, right_width)]
+        row_count = max(len(left_wrapped), len(right_wrapped), 1)
+        height = 0.085 + row_count * line_height
+        body_y = draw_card(fig, y_top, height, title)
+        add_text(fig, 0.07, body_y, left_title, size=11, weight="bold")
+        add_text(fig, 0.52, body_y, right_title, size=11, weight="bold")
+        draw_text_column(fig, 0.07, body_y - 0.03, left_lines, width=left_width, size=size, line_height=line_height)
+        draw_text_column(fig, 0.52, body_y - 0.03, right_lines, width=right_width, size=size, line_height=line_height)
+        return y_top - height - 0.025
+
+    def draw_full_width_card(
+        fig,
+        y_top: float,
+        title: str,
+        lines: list[str],
+        *,
+        width: int = 78,
+        size: int = 9,
+        line_height: float = 0.022,
+    ) -> float:
+        wrapped = [wrapped for line in lines for wrapped in _wrap_pdf_text(line, width)]
+        height = 0.085 + max(len(wrapped), 1) * line_height
+        body_y = draw_card(fig, y_top, height, title)
+        draw_text_column(fig, 0.07, body_y, lines, width=width, size=size, line_height=line_height)
+        return y_top - height - 0.025
+
     summary = report["price_summary"]
     scores = report["scores"]
 
@@ -485,59 +651,93 @@ def _save_report_pdf(report: dict[str, Any]) -> Path:
         fig.patch.set_facecolor("white")
         plt.axis("off")
 
-        add_text(fig, 0.05, 0.965, f"{report['ticker']} 투자 분석 리포트", size=18, weight="bold")
+        company_name = report["base_info"].get("종목명") or report["ticker"]
+        add_text(fig, 0.05, 0.965, f"{company_name} ({report['ticker']}) 투자 분석 리포트", size=18, weight="bold")
         add_text(fig, 0.05, 0.935, f"생성시각: {datetime.now().strftime('%Y-%m-%d %H:%M')}", size=9, color="#475569")
-        add_text(fig, 0.62, 0.935, f"분석기간: {scores['term']} / 조회기간: {report['period']}", size=9, color="#475569")
+        add_text(fig, 0.62, 0.935, f"분석기간: {_format_term_label(scores['term'])} / 조회기간: {_format_period_label(report['period'])}", size=9, color="#475569")
 
-        body_y = draw_card(fig, 0.89, 0.14, "핵심 요약")
-        add_text(fig, 0.07, body_y, f"종합 점수: {scores['total']}/100", size=13, weight="bold")
-        add_text(fig, 0.34, body_y, f"판정: {scores['label']}", size=13, weight="bold", color="#0F766E")
-        add_text(fig, 0.60, body_y, f"기술: {scores['technical']}/100", size=11)
-        add_text(fig, 0.78, body_y, f"재무: {scores['fundamentals']}/100", size=11)
-        add_text(fig, 0.07, body_y - 0.045, f"기준 가격: {summary['current_price']:.2f} ({summary['market_state']})", size=10)
-        add_text(fig, 0.40, body_y - 0.045, f"정규장 종가: {summary['daily_close']:.2f}", size=10)
-        if summary["diff_pct"] is not None:
-            add_text(fig, 0.67, body_y - 0.045, f"종가 대비: {summary['diff_pct']:+.2f}%", size=10)
-
-        body_y = draw_card(fig, 0.72, 0.18, "기술 / 재무 팩터")
-        add_text(fig, 0.07, body_y, "기술 팩터", size=11, weight="bold")
-        for idx, (name, value) in enumerate(scores["technical_factors"].items()):
-            add_text(fig, 0.07, body_y - 0.03 - idx * 0.028, f"{name}: {value}", size=10)
-        add_text(fig, 0.52, body_y, "재무 팩터", size=11, weight="bold")
-        for idx, (name, value) in enumerate(scores["fundamental_factors"].items()):
-            add_text(fig, 0.52, body_y - 0.03 - idx * 0.028, f"{name}: {value}", size=10)
-
-        body_y = draw_card(fig, 0.50, 0.18, "상대강도 / 최근 가격")
-        for idx, line in enumerate(report["sector_lines"][:6]):
-            add_text(fig, 0.07, body_y - idx * 0.028, line, size=9)
-        price_x = 0.55
-        add_text(fig, price_x, body_y, "주요 가격 지표", size=11, weight="bold")
+        diff_label = f"종가 대비: {summary['diff_pct']:+.2f}%" if summary["diff_pct"] is not None else "종가 대비: -"
         latest_date = summary["latest_date"]
-        add_text(fig, price_x, body_y - 0.03, f"일자: {latest_date.date() if hasattr(latest_date, 'date') else latest_date}", size=9)
-        add_text(fig, price_x, body_y - 0.058, f"RSI: {summary['rsi']:.1f}" if summary["rsi"] is not None else "RSI: -", size=9)
-        for idx, (window, value) in enumerate(list(summary["moving_averages"].items())[:4]):
-            add_text(fig, price_x, body_y - 0.086 - idx * 0.028, f"MA({window}): {value:.2f}", size=9)
+        key_summary_lines = [
+            f"종합 점수: {scores['total']}/100",
+            f"판정: {scores['label']}",
+            f"기술 점수: {scores['technical']}/100",
+            f"재무 점수: {scores['fundamentals']}/100",
+        ]
+        quick_view_lines = [
+            f"종목: {company_name} ({report['ticker']})",
+            f"분석기간: {_format_term_label(scores['term'])}",
+            f"조회기간: {_format_period_label(report['period'])}",
+            f"기준 상태: {MARKET_STATE_LABELS.get(summary['market_state'], summary['market_state'])}",
+        ]
+        price_lines = [
+            f"기준 가격: {summary['current_price']:.2f} ({MARKET_STATE_LABELS.get(summary['market_state'], summary['market_state'])})",
+            f"정규장 종가: {summary['daily_close']:.2f}",
+            diff_label,
+            f"일자: {latest_date.date() if hasattr(latest_date, 'date') else latest_date}",
+            f"RSI: {summary['rsi']:.1f}" if summary["rsi"] is not None else "RSI: -",
+        ]
+        for window, value in list(summary["moving_averages"].items())[:4]:
+            price_lines.append(f"MA({window}): {value:.2f}")
 
-        body_y = draw_card(fig, 0.28, 0.20, "주요 근거")
-        add_text(fig, 0.07, body_y, "기술적 근거", size=11, weight="bold")
-        for idx, reason in enumerate(scores["technical_reasons"][:5]):
-            add_text(fig, 0.07, body_y - 0.03 - idx * 0.026, f"- {reason}", size=9)
-        add_text(fig, 0.52, body_y, "펀더멘털 근거", size=11, weight="bold")
-        for idx, reason in enumerate(scores["fundamental_reasons"][:5]):
-            add_text(fig, 0.52, body_y - 0.03 - idx * 0.026, f"- {reason}", size=9)
+        y_cursor = 0.89
+        y_cursor = draw_two_column_card(
+            fig,
+            y_cursor,
+            "핵심 요약",
+            "점수 요약",
+            key_summary_lines,
+            "조회 정보",
+            quick_view_lines,
+            left_width=28,
+            right_width=30,
+            size=10,
+            line_height=0.024,
+        )
+
+        technical_factor_lines = [f"{FACTOR_LABELS.get(name, name)}: {value}" for name, value in scores["technical_factors"].items()]
+        fundamental_factor_lines = [f"{FACTOR_LABELS.get(name, name)}: {value}" for name, value in scores["fundamental_factors"].items()]
+        y_cursor = draw_two_column_card(
+            fig,
+            y_cursor,
+            "기술 / 재무 팩터",
+            "기술 팩터",
+            technical_factor_lines,
+            "재무 팩터",
+            fundamental_factor_lines,
+            left_width=24,
+            right_width=24,
+        )
+
+        y_cursor = draw_two_column_card(
+            fig,
+            y_cursor,
+            "상대강도 / 최근 가격",
+            "섹터 비교",
+            report["sector_lines"][:6],
+            "주요 가격 지표",
+            price_lines,
+            left_width=34,
+            right_width=26,
+        )
+
+        reason_lines = [f"기술: {reason}" for reason in scores["technical_reasons"][:4]]
+        reason_lines.extend(f"재무: {reason}" for reason in scores["fundamental_reasons"][:4])
+        draw_full_width_card(fig, y_cursor, "주요 근거", reason_lines, width=72)
 
         pdf.savefig(fig, bbox_inches="tight")
         plt.close(fig)
 
         report_lines = _render_report_lines(report)
+        wrapped_report_lines = [wrapped for line in report_lines for wrapped in _wrap_pdf_text(line, 78)]
         lines_per_page = 44
         line_height = 0.020
-        for start in range(0, len(report_lines), lines_per_page):
-            page_lines = report_lines[start:start + lines_per_page]
+        for start in range(0, len(wrapped_report_lines), lines_per_page):
+            page_lines = wrapped_report_lines[start:start + lines_per_page]
             fig = plt.figure(figsize=(8.27, 11.69))
             fig.patch.set_facecolor("white")
             plt.axis("off")
-            add_text(fig, 0.05, 0.965, f"{report['ticker']} 상세 리포트", size=15, weight="bold")
+            add_text(fig, 0.05, 0.965, f"{company_name} ({report['ticker']}) 상세 리포트", size=15, weight="bold")
 
             y = 0.93
             for line in page_lines:

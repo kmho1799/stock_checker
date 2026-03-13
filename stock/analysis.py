@@ -7,16 +7,81 @@ from .pivot import get_support_resistance_pivot
 from .utils import fmt_big_num, fmt_num
 
 
+SECTOR_NAME_MAP = {
+    "Technology": "기술",
+    "Healthcare": "헬스케어",
+    "Financial Services": "금융 서비스",
+    "Financials": "금융",
+    "Consumer Cyclical": "경기소비재",
+    "Consumer Defensive": "필수소비재",
+    "Energy": "에너지",
+    "Industrials": "산업재",
+    "Basic Materials": "소재",
+    "Real Estate": "부동산",
+    "Communication Services": "커뮤니케이션 서비스",
+    "Utilities": "유틸리티",
+}
+
+SECTOR_ETF_NAME_MAP = {
+    "XLK": "기술주 대표 ETF",
+    "XLV": "헬스케어 대표 ETF",
+    "XLF": "금융 대표 ETF",
+    "XLY": "경기소비재 대표 ETF",
+    "XLP": "필수소비재 대표 ETF",
+    "XLE": "에너지 대표 ETF",
+    "XLI": "산업재 대표 ETF",
+    "XLB": "소재 대표 ETF",
+    "XLRE": "부동산 대표 ETF",
+    "XLC": "커뮤니케이션 서비스 대표 ETF",
+    "XLU": "유틸리티 대표 ETF",
+}
+
+INDUSTRY_NAME_MAP = {
+    "Consumer Electronics": "소비자 전자기기",
+    "Semiconductors": "반도체",
+    "Software - Infrastructure": "인프라 소프트웨어",
+    "Software - Application": "응용 소프트웨어",
+    "Internet Content & Information": "인터넷 콘텐츠 및 정보",
+    "Communication Equipment": "통신 장비",
+    "Medical Devices": "의료기기",
+    "Drug Manufacturers - General": "제약 일반",
+    "Banks - Diversified": "종합은행",
+    "Credit Services": "신용 서비스",
+    "Oil & Gas Integrated": "종합 석유·가스",
+    "Aerospace & Defense": "항공우주·방산",
+    "Auto Manufacturers": "자동차 제조",
+    "Internet Retail": "인터넷 소매",
+}
+
+
+def _format_sector_name(sector: str) -> str:
+    if not sector or sector == "-":
+        return "-"
+    return SECTOR_NAME_MAP.get(sector, sector)
+
+
+
+def _format_sector_etf(etf: str) -> str:
+    label = SECTOR_ETF_NAME_MAP.get(etf)
+    return f"{label} ({etf})" if label else etf
+
+
+def _format_industry_name(industry: str) -> str:
+    if not industry or industry == "-":
+        return "-"
+    return INDUSTRY_NAME_MAP.get(industry, industry)
+
+
 def analyze_sector_comparison(comp: dict) -> list[str]:
     lines = []
 
-    sector = comp.get("sector", "-")
-    industry = comp.get("industry", "-")
+    sector = _format_sector_name(comp.get("sector", "-"))
+    industry = _format_industry_name(comp.get("industry", "-"))
     sector_etf = comp.get("sector_etf")
 
     lines.append(f"섹터: {sector} / 산업: {industry}")
     if sector_etf:
-        lines.append(f"섹터 ETF: {sector_etf}")
+        lines.append(f"섹터 대표 ETF: {_format_sector_etf(sector_etf)}")
 
     has_relative = False
     for key, label in RELATIVE_PERIOD_LABELS:
@@ -26,7 +91,7 @@ def analyze_sector_comparison(comp: dict) -> list[str]:
         if t_ret is None or s_ret is None:
             continue
         has_relative = True
-        lines.append(f"{label} 수익률: 종목 {t_ret:+.1f}% / 섹터ETF {s_ret:+.1f}%")
+        lines.append(f"{label} 수익률: 종목 {t_ret:+.1f}% / 섹터 평균 {s_ret:+.1f}%")
         if diff is None:
             continue
         if diff >= 10:
@@ -47,7 +112,7 @@ def analyze_sector_comparison(comp: dict) -> list[str]:
     sector_per = comp.get("sector_per")
     if target_per is not None and sector_per is not None:
         per_diff_pct = (target_per - sector_per) / sector_per * 100
-        lines.append(f"PER: 종목 {target_per:.1f}x / 섹터ETF {sector_per:.1f}x")
+        lines.append(f"PER: 종목 {target_per:.1f}x / 섹터 대표 ETF {sector_per:.1f}x")
         if per_diff_pct >= 30:
             lines.append(f"→ 섹터 대비 PER {per_diff_pct:+.0f}% 프리미엄 (고평가 주의)")
         elif per_diff_pct >= 10:
@@ -63,7 +128,7 @@ def analyze_sector_comparison(comp: dict) -> list[str]:
 
     fpe = comp.get("target_forward_pe")
     if fpe is not None:
-        lines.append(f"Forward PER: {fpe:.1f}x")
+        lines.append(f"선행 PER: {fpe:.1f}x")
 
     target_margin = comp.get("target_op_margin")
     if target_margin is not None:
