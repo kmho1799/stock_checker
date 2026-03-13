@@ -46,3 +46,6 @@ id_rsa.pub
 .idea/
 .DS_Store
 Thumbs.db
+
+# Generated analysis reports
+분석자료/
