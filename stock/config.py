@@ -62,9 +62,10 @@ RELATIVE_PERIOD_LABELS = (
 
 
 FUNDAMENTAL_SCORE_WEIGHTS = {
-    "growth": 0.30,
-    "quality": 0.25,
-    "balance": 0.20,
-    "profitability": 0.20,
-    "market_position": 0.05,
+    "growth": 0.20,
+    "valuation": 0.20,
+    "quality": 0.20,
+    "balance": 0.15,
+    "profitability": 0.15,
+    "market_position": 0.10,
 }

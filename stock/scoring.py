@@ -212,11 +212,26 @@ def score_fundamentals(
     de = fin.get("debt_to_equity_pct")
     gross_margin = fin.get("gross_margin_pct")
     operating_margin = fin.get("operating_margin_pct")
+    net_margin = fin.get("net_margin_pct")
     current_ratio = fin.get("current_ratio")
+    quick_ratio = fin.get("quick_ratio")
     share_change = fin.get("share_change_yoy_pct")
     earnings_quality = fin.get("earnings_quality_ratio")
     roe = fin.get("roe_pct")
+    roa = fin.get("roa_pct")
+    interest_coverage = fin.get("interest_coverage")
+    net_debt_to_ebitda = fin.get("net_debt_to_ebitda")
+    fcf_margin = fin.get("fcf_margin_pct")
+    capex_to_revenue = fin.get("capex_to_revenue_pct")
+    ocf_yoy = fin.get("ocf_yoy_pct")
+    ev_to_ebitda = fin.get("ev_to_ebitda")
+    peg_ratio = fin.get("peg_ratio")
+    price_to_sales = fin.get("price_to_sales")
+    price_to_fcf = fin.get("price_to_fcf")
+    fcf_yield = fin.get("fcf_yield_pct")
+    payout_ratio = fin.get("payout_ratio_pct")
 
+    # --- growth ---
     growth_score = 50.0
     for value, strong, positive, penalty in ((ar, 15, 5, -8), (qr, 10, 3, -6), (ani, 15, 7, -10), (qni, 10, 4, -7)):
         if value is None:
@@ -227,68 +242,192 @@ def score_fundamentals(
             growth_score += 5
         elif value < -10:
             growth_score += penalty
+    if ocf_yoy is not None:
+        if ocf_yoy >= 10:
+            growth_score += 6
+        elif ocf_yoy < -15:
+            growth_score -= 6
     if growth_score >= 60:
         reasons.append("매출/이익 성장 양호")
     elif growth_score <= 40:
         reasons.append("매출/이익 성장 둔화")
     factor_scores["growth"] = _clamp_score(growth_score)
 
+    # --- valuation ---
+    valuation_score = 50.0
+    val_count = 0
+    if ev_to_ebitda is not None:
+        val_count += 1
+        if ev_to_ebitda < 10:
+            valuation_score += 10
+        elif ev_to_ebitda < 15:
+            valuation_score += 5
+        elif ev_to_ebitda > 30:
+            valuation_score -= 12
+            reasons.append(f"EV/EBITDA 고평가({ev_to_ebitda:.1f}x)")
+        elif ev_to_ebitda > 20:
+            valuation_score -= 6
+    if peg_ratio is not None:
+        val_count += 1
+        if 0 < peg_ratio <= 1.0:
+            valuation_score += 12
+            reasons.append(f"PEG 저평가({peg_ratio:.2f})")
+        elif peg_ratio <= 1.5:
+            valuation_score += 6
+        elif peg_ratio > 3.0:
+            valuation_score -= 10
+        elif peg_ratio > 2.0:
+            valuation_score -= 5
+        elif peg_ratio < 0:
+            valuation_score -= 8
+    if price_to_sales is not None:
+        val_count += 1
+        if price_to_sales < 2:
+            valuation_score += 8
+        elif price_to_sales < 5:
+            valuation_score += 3
+        elif price_to_sales > 15:
+            valuation_score -= 10
+        elif price_to_sales > 8:
+            valuation_score -= 5
+    if fcf_yield is not None:
+        val_count += 1
+        if fcf_yield >= 8:
+            valuation_score += 10
+            reasons.append(f"FCF Yield 양호({fcf_yield:.1f}%)")
+        elif fcf_yield >= 4:
+            valuation_score += 5
+        elif fcf_yield < 0:
+            valuation_score -= 8
+        elif fcf_yield < 2:
+            valuation_score -= 4
+    if price_to_fcf is not None and price_to_fcf > 0:
+        val_count += 1
+        if price_to_fcf < 15:
+            valuation_score += 6
+        elif price_to_fcf < 25:
+            valuation_score += 3
+        elif price_to_fcf > 50:
+            valuation_score -= 8
+        elif price_to_fcf > 35:
+            valuation_score -= 4
+    if val_count == 0:
+        valuation_score = 50.0
+    factor_scores["valuation"] = _clamp_score(valuation_score)
+
+    # --- quality ---
     quality_score = 50.0
     if ocf is not None:
         quality_score += 8 if ocf > 0 else -10
     if fcf is not None:
-        quality_score += 10 if fcf > 0 else -12
+        quality_score += 8 if fcf > 0 else -10
     if earnings_quality is not None:
         if earnings_quality >= 1.0:
-            quality_score += 10
+            quality_score += 8
             reasons.append("현금흐름 기반 이익의 질 양호")
         elif earnings_quality < 0.7:
-            quality_score -= 10
+            quality_score -= 8
+    if fcf_margin is not None:
+        if fcf_margin >= 15:
+            quality_score += 8
+        elif fcf_margin >= 8:
+            quality_score += 4
+        elif fcf_margin < 0:
+            quality_score -= 6
+    if capex_to_revenue is not None:
+        if capex_to_revenue > 30:
+            quality_score -= 5
+        elif capex_to_revenue < 5:
+            quality_score += 3
     factor_scores["quality"] = _clamp_score(quality_score)
 
+    # --- balance ---
     balance_score = 50.0
     if de is not None:
         if de < 50:
-            balance_score += 15
+            balance_score += 12
             reasons.append("부채비율 매우 안정")
         elif de < 100:
-            balance_score += 8
+            balance_score += 6
         elif de >= 200:
-            balance_score -= 15
+            balance_score -= 12
             reasons.append("부채 부담 높음")
     if current_ratio is not None:
         if current_ratio >= 1.5:
-            balance_score += 8
+            balance_score += 6
         elif current_ratio < 1.0:
+            balance_score -= 8
+    if quick_ratio is not None:
+        if quick_ratio >= 1.0:
+            balance_score += 5
+        elif quick_ratio < 0.5:
+            balance_score -= 6
+            reasons.append("당좌비율 주의")
+    if interest_coverage is not None:
+        if interest_coverage >= 5:
+            balance_score += 6
+        elif interest_coverage >= 3:
+            balance_score += 3
+        elif interest_coverage < 1.5:
             balance_score -= 10
+            reasons.append("이자보상배율 위험")
+    if net_debt_to_ebitda is not None:
+        if net_debt_to_ebitda < 1:
+            balance_score += 6
+        elif net_debt_to_ebitda < 3:
+            balance_score += 3
+        elif net_debt_to_ebitda > 5:
+            balance_score -= 8
+            reasons.append("순부채/EBITDA 과다")
     if share_change is not None:
         if share_change <= 0:
-            balance_score += 5
+            balance_score += 4
         elif share_change >= 3:
-            balance_score -= 7
+            balance_score -= 6
             reasons.append("주식수 희석 진행")
     factor_scores["balance"] = _clamp_score(balance_score)
 
+    # --- profitability ---
     profitability_score = 50.0
     if gross_margin is not None:
         if gross_margin >= 40:
-            profitability_score += 10
+            profitability_score += 8
         elif gross_margin < 15:
-            profitability_score -= 10
+            profitability_score -= 8
     if operating_margin is not None:
         if operating_margin >= 15:
-            profitability_score += 12
+            profitability_score += 10
             reasons.append("영업이익률 우수")
         elif operating_margin < 5:
-            profitability_score -= 12
+            profitability_score -= 10
+    if net_margin is not None:
+        if net_margin >= 15:
+            profitability_score += 6
+        elif net_margin < 0:
+            profitability_score -= 8
+            reasons.append("순이익률 적자")
     if roe is not None:
         if roe >= 15:
-            profitability_score += 10
+            profitability_score += 8
             reasons.append("ROE 우수")
         elif roe < 5:
-            profitability_score -= 8
+            profitability_score -= 6
+    if roa is not None:
+        if roa >= 10:
+            profitability_score += 6
+        elif roa >= 5:
+            profitability_score += 3
+        elif roa < 0:
+            profitability_score -= 6
+    if payout_ratio is not None:
+        if 20 <= payout_ratio <= 60:
+            profitability_score += 4
+        elif payout_ratio > 100:
+            profitability_score -= 6
+            reasons.append("배당성향 과다(100% 초과)")
     factor_scores["profitability"] = _clamp_score(profitability_score)
 
+    # --- market_position ---
     market_position_score = 50.0
     if high_52w is not None and low_52w is not None and not pd.isna(high_52w) and not pd.isna(low_52w) and high_52w != low_52w:
         pos = (price - low_52w) / (high_52w - low_52w) * 100

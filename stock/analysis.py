@@ -311,36 +311,112 @@ def analyze_long_term_fundamentals(
 
     lines = []
 
+    # --- 52주 위치 ---
     if high_52w is not None and low_52w is not None and not pd.isna(high_52w) and not pd.isna(low_52w):
         pos = (price - low_52w) / (high_52w - low_52w) * 100 if high_52w != low_52w else 50
         lines.append(f"52주 고점: {high_52w:.2f} / 52주 저점: {low_52w:.2f}")
         lines.append(f"현재가는 52주 범위의 {pos:.1f}% 위치")
 
+    # --- 수익성 ---
+    lines.append("")
+    lines.append("[수익성]")
     lines.append(f"매출총이익률: {fmt_num(fin.get('gross_margin_pct'))}%")
     lines.append(f"영업이익률: {fmt_num(fin.get('operating_margin_pct'))}%")
-    lines.append(f"유동비율: {fmt_num(fin.get('current_ratio'))}")
-    lines.append(f"주식수 증감률: {fmt_num(fin.get('share_change_yoy_pct'))}%")
-    lines.append(f"이익의 질(OCF/NI): {fmt_num(fin.get('earnings_quality_ratio'))}")
+    lines.append(f"순이익률: {fmt_num(fin.get('net_margin_pct'))}%")
     lines.append(f"ROE: {fmt_num(fin.get('roe_pct'))}%")
+    lines.append(f"ROA: {fmt_num(fin.get('roa_pct'))}%")
+
+    payout = fin.get("payout_ratio_pct")
+    if payout is not None:
+        lines.append(f"배당성향: {fmt_num(payout)}%")
+        if payout > 100:
+            lines.append("→ 배당성향 과다 (이익 초과 배당)")
+        elif 20 <= payout <= 60:
+            lines.append("→ 배당성향 적정 범위")
+
+    # --- 성장성 ---
+    lines.append("")
+    lines.append("[성장성]")
     lines.append(f"연간 매출 성장률: {fmt_num(fin.get('annual_revenue_yoy_pct'))}%")
     lines.append(f"분기 매출 성장률: {fmt_num(fin.get('quarterly_revenue_yoy_pct'))}%")
     lines.append(f"연간 순이익 성장률: {fmt_num(fin.get('annual_net_income_yoy_pct'))}%")
     lines.append(f"분기 순이익 성장률: {fmt_num(fin.get('quarterly_net_income_yoy_pct'))}%")
+    lines.append(f"영업현금흐름 성장률: {fmt_num(fin.get('ocf_yoy_pct'))}%")
+
+    # --- 현금흐름 ---
+    lines.append("")
+    lines.append("[현금흐름]")
     lines.append(f"영업현금흐름: {fmt_big_num(fin.get('operating_cash_flow'))}")
     lines.append(f"잉여현금흐름: {fmt_big_num(fin.get('free_cash_flow'))}")
-    lines.append(f"부채비율(D/E): {fmt_num(fin.get('debt_to_equity_pct'))}%")
+    lines.append(f"이익의 질(OCF/NI): {fmt_num(fin.get('earnings_quality_ratio'))}")
+    lines.append(f"FCF 마진: {fmt_num(fin.get('fcf_margin_pct'))}%")
+    lines.append(f"CAPEX/매출: {fmt_num(fin.get('capex_to_revenue_pct'))}%")
 
     fcf = fin.get("free_cash_flow")
     if fcf is not None:
         lines.append("→ 잉여현금흐름 " + ("양호(+)" if fcf > 0 else "주의(-)"))
 
+    fcf_margin = fin.get("fcf_margin_pct")
+    if fcf_margin is not None:
+        if fcf_margin >= 15:
+            lines.append("→ FCF 마진 우수 (매출의 현금 전환 효율 높음)")
+        elif fcf_margin < 0:
+            lines.append("→ FCF 마진 음수 (현금 유출 상태)")
+
+    # --- 재무 안정성 ---
+    lines.append("")
+    lines.append("[재무 안정성]")
+    lines.append(f"부채비율(D/E): {fmt_num(fin.get('debt_to_equity_pct'))}%")
+    lines.append(f"유동비율: {fmt_num(fin.get('current_ratio'))}")
+    lines.append(f"당좌비율: {fmt_num(fin.get('quick_ratio'))}")
+    lines.append(f"이자보상배율: {fmt_num(fin.get('interest_coverage'))}x")
+    lines.append(f"순부채/EBITDA: {fmt_num(fin.get('net_debt_to_ebitda'))}x")
+    lines.append(f"주식수 증감률: {fmt_num(fin.get('share_change_yoy_pct'))}%")
+
     de = fin.get("debt_to_equity_pct")
     if de is not None:
         if de < 100:
-            lines.append("→ 부채비율 안정권 가능성")
+            lines.append("→ 부채비율 안정권")
         elif de < 200:
             lines.append("→ 부채비율 보통")
         else:
             lines.append("→ 부채 부담 주의")
+
+    interest_cov = fin.get("interest_coverage")
+    if interest_cov is not None:
+        if interest_cov < 1.5:
+            lines.append("→ 이자보상배율 위험 (이자 지급 능력 부족)")
+        elif interest_cov >= 5:
+            lines.append("→ 이자보상배율 양호")
+
+    nde = fin.get("net_debt_to_ebitda")
+    if nde is not None:
+        if nde > 5:
+            lines.append("→ 순부채/EBITDA 과다 (부채 상환 부담 높음)")
+        elif nde < 1:
+            lines.append("→ 순부채/EBITDA 우수 (부채 부담 매우 낮음)")
+
+    # --- 밸류에이션 ---
+    lines.append("")
+    lines.append("[밸류에이션]")
+    lines.append(f"EV/EBITDA: {fmt_num(fin.get('ev_to_ebitda'))}x")
+    lines.append(f"PEG Ratio: {fmt_num(fin.get('peg_ratio'))}")
+    lines.append(f"P/S (주가매출비율): {fmt_num(fin.get('price_to_sales'))}x")
+    lines.append(f"P/FCF (주가잉여현금흐름비율): {fmt_num(fin.get('price_to_fcf'))}x")
+    lines.append(f"FCF Yield: {fmt_num(fin.get('fcf_yield_pct'))}%")
+
+    ev_ebitda = fin.get("ev_to_ebitda")
+    if ev_ebitda is not None:
+        if ev_ebitda > 30:
+            lines.append("→ EV/EBITDA 고평가 구간")
+        elif ev_ebitda < 10:
+            lines.append("→ EV/EBITDA 저평가 가능성")
+
+    peg = fin.get("peg_ratio")
+    if peg is not None:
+        if 0 < peg <= 1.0:
+            lines.append("→ PEG 기준 성장 대비 저평가")
+        elif peg > 2.0:
+            lines.append("→ PEG 기준 성장 대비 고평가")
 
     return lines
